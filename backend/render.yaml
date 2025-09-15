@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: api-project-backend
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: api-project-db
+          property: connectionString
+      - key: API_TOKEN_URL
+        value: https://efatura.etrsoft.com/fmi/data/v1/databases/testdb/sessions
+      - key: API_DATA_URL
+        value: https://efatura.etrsoft.com/fmi/data/v1/databases/testdb/layouts/testdb/records
+      - key: API_USERNAME
+        value: apitest
+      - key: API_PASSWORD
+        value: test123
+
+databases:
+  - name: api-project-db
+    databaseName: api_project
+    user: api_user
