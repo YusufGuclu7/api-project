@@ -12,7 +12,7 @@ import {
   Divider,
 } from '@mui/material';
 import {
-  TreeView,
+  SimpleTreeView,
   TreeItem,
 } from '@mui/x-tree-view';
 import {
@@ -139,8 +139,8 @@ const HierarchicalView: React.FC = () => {
     return parentSegments.join('');
   };
 
-  const handleToggle = (event: React.SyntheticEvent, nodeIds: string[]) => {
-    setExpanded(nodeIds);
+  const handleToggle = (event: React.SyntheticEvent | null, itemIds: string[]) => {
+    setExpanded(itemIds);
   };
 
   const formatCurrency = (amount: number): string => {
@@ -157,7 +157,7 @@ const HierarchicalView: React.FC = () => {
     return (
       <TreeItem
         key={node.accountCode}
-        nodeId={node.accountCode}
+        itemId={node.accountCode}
         label={
           <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, pr: 0 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', flex: 1 }}>
@@ -235,6 +235,7 @@ const HierarchicalView: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (loading) {
@@ -397,16 +398,18 @@ const HierarchicalView: React.FC = () => {
 
       {/* Tree View */}
       <Paper elevation={2}>
-        <TreeView
+        <SimpleTreeView
           aria-label="hesap hierarchy"
-          defaultCollapseIcon={<ExpandMore />}
-          defaultExpandIcon={<ChevronRight />}
-          expanded={expanded}
-          onNodeToggle={handleToggle}
+          slots={{
+            collapseIcon: ExpandMore,
+            expandIcon: ChevronRight,
+          }}
+          expandedItems={expanded}
+          onExpandedItemsChange={handleToggle}
           sx={{ p: 2 }}
         >
           {treeData.map(node => renderTreeNode(node))}
-        </TreeView>
+        </SimpleTreeView>
       </Paper>
     </Box>
   );
