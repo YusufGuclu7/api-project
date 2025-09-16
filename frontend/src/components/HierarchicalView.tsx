@@ -3,34 +3,46 @@ import {
   Box,
   Paper,
   Typography,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Button,
   CircularProgress,
   Alert,
-  Chip,
   IconButton,
   Card,
   CardContent,
   Divider,
 } from '@mui/material';
 import {
+  TreeView,
+  TreeItem,
+} from '@mui/x-tree-view';
+import {
+  ExpandMore,
+  ChevronRight,
   AccountBalance as AccountBalanceIcon,
   Refresh as RefreshIcon,
   TrendingUp as TrendingUpIcon,
   TrendingDown as TrendingDownIcon,
+  FolderOpen,
+  AccountBox,
 } from '@mui/icons-material';
 import { ApiDataItem } from '../types';
 import { apiService } from '../services/apiService';
 
+interface TreeNode {
+  accountCode: string;
+  accountName?: string;
+  debit: number;
+  credit: number;
+  children: TreeNode[];
+  level: number;
+}
+
 const HierarchicalView: React.FC = () => {
   const [flatData, setFlatData] = useState<ApiDataItem[]>([]);
+  const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string[]>([]);
 
   const fetchData = async (showLoading = true) => {
     try {
@@ -40,6 +52,10 @@ const HierarchicalView: React.FC = () => {
       const flat = await apiService.getAllData();
       console.log('Fetched flat data:', flat);
       setFlatData(flat);
+
+      // Convert flat data to tree structure
+      const tree = buildTree(flat);
+      setTreeData(tree);
     } catch (err) {
       setError('Backend bağlantısı kurulamadı. Lütfen backend sunucusunun çalıştığından emin olun.');
       console.error('Error fetching data:', err);
@@ -52,10 +68,80 @@ const HierarchicalView: React.FC = () => {
     fetchData(false);
   };
 
+  const buildTree = (flatData: ApiDataItem[]): TreeNode[] => {
+    const nodeMap = new Map<string, TreeNode>();
+    const roots: TreeNode[] = [];
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+    // Sort by account code to ensure proper hierarchy
+    const sortedData = [...flatData].sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+
+    // Create all nodes first
+    sortedData.forEach(item => {
+      const node: TreeNode = {
+        accountCode: item.accountCode,
+        accountName: item.accountName,
+        debit: item.debit,
+        credit: item.credit,
+        children: [],
+        level: getAccountLevel(item.accountCode)
+      };
+      nodeMap.set(item.accountCode, node);
+    });
+
+    // Build hierarchy
+    sortedData.forEach(item => {
+      const node = nodeMap.get(item.accountCode)!;
+      const parentCode = getParentAccountCode(item.accountCode);
+
+      if (parentCode && nodeMap.has(parentCode)) {
+        const parent = nodeMap.get(parentCode)!;
+        parent.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    });
+
+    return roots;
+  };
+
+  const getAccountLevel = (accountCode: string): number => {
+    // Count non-zero digits to determine level
+    const segments = accountCode.match(/.{1,2}/g) || [];
+    let level = 0;
+    for (const segment of segments) {
+      if (parseInt(segment) !== 0) {
+        level++;
+      } else {
+        break;
+      }
+    }
+    return level;
+  };
+
+  const getParentAccountCode = (accountCode: string): string | null => {
+    const segments = accountCode.match(/.{1,2}/g) || [];
+
+    // Find the last non-zero segment
+    let lastNonZeroIndex = -1;
+    for (let i = segments.length - 1; i >= 0; i--) {
+      if (parseInt(segments[i]) !== 0) {
+        lastNonZeroIndex = i;
+        break;
+      }
+    }
+
+    if (lastNonZeroIndex <= 0) return null;
+
+    // Create parent code by setting the last non-zero segment to 00
+    const parentSegments = [...segments];
+    parentSegments[lastNonZeroIndex] = '00';
+
+    return parentSegments.join('');
+  };
+
+  const handleToggle = (event: React.SyntheticEvent, nodeIds: string[]) => {
+    setExpanded(nodeIds);
+  };
 
   const formatCurrency = (amount: number): string => {
     return new Intl.NumberFormat('tr-TR', {
@@ -63,6 +149,93 @@ const HierarchicalView: React.FC = () => {
       currency: 'TRY',
     }).format(amount);
   };
+
+  const renderTreeNode = (node: TreeNode): React.ReactNode => {
+    const hasChildren = node.children.length > 0;
+    const netBalance = node.debit - node.credit;
+
+    return (
+      <TreeItem
+        key={node.accountCode}
+        nodeId={node.accountCode}
+        label={
+          <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, pr: 0 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+              {hasChildren ? (
+                <FolderOpen sx={{ mr: 1, color: 'primary.main' }} />
+              ) : (
+                <AccountBox sx={{ mr: 1, color: 'text.secondary' }} />
+              )}
+              <Box sx={{ flex: 1 }}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontWeight: hasChildren ? 'bold' : 'medium',
+                    fontFamily: 'monospace',
+                    color: hasChildren ? 'primary.main' : 'text.primary'
+                  }}
+                >
+                  {node.accountCode}
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: 'text.secondary',
+                    display: 'block',
+                    fontSize: '0.75rem'
+                  }}
+                >
+                  {node.accountName || 'Hesap adı bulunamadı'}
+                </Typography>
+              </Box>
+            </Box>
+            <Box sx={{ display: 'flex', gap: 2, minWidth: 400 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  minWidth: 100,
+                  textAlign: 'right',
+                  color: node.debit > 0 ? 'error.main' : 'text.secondary',
+                  fontWeight: node.debit > 0 ? 'medium' : 'normal'
+                }}
+              >
+                {node.debit > 0 ? formatCurrency(node.debit) : '-'}
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  minWidth: 100,
+                  textAlign: 'right',
+                  color: node.credit > 0 ? 'success.main' : 'text.secondary',
+                  fontWeight: node.credit > 0 ? 'medium' : 'normal'
+                }}
+              >
+                {node.credit > 0 ? formatCurrency(node.credit) : '-'}
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  minWidth: 120,
+                  textAlign: 'right',
+                  fontWeight: 'bold',
+                  color: netBalance > 0 ? 'error.main' :
+                         netBalance < 0 ? 'success.main' : 'text.primary'
+                }}
+              >
+                {formatCurrency(netBalance)}
+              </Typography>
+            </Box>
+          </Box>
+        }
+      >
+        {node.children.map(child => renderTreeNode(child))}
+      </TreeItem>
+    );
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
 
   if (loading) {
     return (
@@ -200,75 +373,41 @@ const HierarchicalView: React.FC = () => {
 
       <Divider sx={{ mb: 3 }} />
 
-      <TableContainer component={Paper} elevation={2}>
-        <Table>
-          <TableHead>
-            <TableRow sx={{ backgroundColor: 'primary.main' }}>
-              <TableCell sx={{ fontWeight: 'bold', color: 'white' }}>
-                Hesap Kodu
-              </TableCell>
-              <TableCell sx={{ fontWeight: 'bold', color: 'white' }}>
-                Şirket/Hesap Adı
-              </TableCell>
-              <TableCell align="right" sx={{ fontWeight: 'bold', color: 'white' }}>
+      {/* Tree View Header */}
+      <Paper elevation={2} sx={{ mb: 2 }}>
+        <Box sx={{ p: 2, backgroundColor: 'primary.main', color: 'white' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Typography variant="h6" sx={{ flex: 1, fontWeight: 'bold' }}>
+              Hesap Kodu ve Adı
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 2, minWidth: 400 }}>
+              <Typography variant="body2" sx={{ minWidth: 100, textAlign: 'right', fontWeight: 'bold' }}>
                 Borç (₺)
-              </TableCell>
-              <TableCell align="right" sx={{ fontWeight: 'bold', color: 'white' }}>
+              </Typography>
+              <Typography variant="body2" sx={{ minWidth: 100, textAlign: 'right', fontWeight: 'bold' }}>
                 Alacak (₺)
-              </TableCell>
-              <TableCell align="right" sx={{ fontWeight: 'bold', color: 'white' }}>
+              </Typography>
+              <Typography variant="body2" sx={{ minWidth: 120, textAlign: 'right', fontWeight: 'bold' }}>
                 Net Bakiye (₺)
-              </TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {flatData.map((item) => (
-              <TableRow
-                key={item.accountCode}
-                sx={{
-                  '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.04)' },
-                  '&:nth-of-type(even)': { backgroundColor: 'rgba(0, 0, 0, 0.02)' }
-                }}
-              >
-                <TableCell sx={{ fontWeight: 'medium', fontFamily: 'monospace' }}>
-                  {item.accountCode}
-                </TableCell>
-                <TableCell sx={{
-                  maxWidth: 400,
-                  fontSize: '0.9rem',
-                  fontWeight: item.accountName ? 'normal' : 'italic',
-                  color: item.accountName ? 'text.primary' : 'text.secondary'
-                }}>
-                  {item.accountName ? item.accountName : (
-                    <span style={{ color: '#d32f2f', fontStyle: 'italic' }}>
-                      Şirket adı bulunamadı
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell align="right" sx={{
-                  color: item.debit > 0 ? 'error.main' : 'text.secondary',
-                  fontWeight: item.debit > 0 ? 'medium' : 'normal'
-                }}>
-                  {item.debit > 0 ? formatCurrency(item.debit) : '-'}
-                </TableCell>
-                <TableCell align="right" sx={{
-                  color: item.credit > 0 ? 'success.main' : 'text.secondary',
-                  fontWeight: item.credit > 0 ? 'medium' : 'normal'
-                }}>
-                  {item.credit > 0 ? formatCurrency(item.credit) : '-'}
-                </TableCell>
-                <TableCell align="right" sx={{
-                  fontWeight: 'bold',
-                  color: (item.debit - item.credit) > 0 ? 'error.main' :
-                         (item.debit - item.credit) < 0 ? 'success.main' : 'text.primary'
-                }}>
-                  {formatCurrency(item.debit - item.credit)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+      </Paper>
+
+      {/* Tree View */}
+      <Paper elevation={2}>
+        <TreeView
+          aria-label="hesap hierarchy"
+          defaultCollapseIcon={<ExpandMore />}
+          defaultExpandIcon={<ChevronRight />}
+          expanded={expanded}
+          onNodeToggle={handleToggle}
+          sx={{ p: 2 }}
+        >
+          {treeData.map(node => renderTreeNode(node))}
+        </TreeView>
+      </Paper>
     </Box>
   );
 };
