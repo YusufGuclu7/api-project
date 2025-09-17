@@ -22,7 +22,6 @@ import {
   Refresh as RefreshIcon,
   TrendingUp as TrendingUpIcon,
   TrendingDown as TrendingDownIcon,
-  FolderOpen,
   AccountBox,
 } from '@mui/icons-material';
 import { ApiDataItem } from '../types';
@@ -68,12 +67,53 @@ const HierarchicalView: React.FC = () => {
     fetchData(false);
   };
 
+  const getMainAccountCode = (accountCode: string): string | null => {
+    // 120.01.0001 -> 120.01
+    // 100.01.00001001 -> 100.01
+    const match = accountCode.match(/^(\d{3}\.\d{2})/);
+    return match ? match[1] : null;
+  };
+
+  const getMainAccountName = (mainAccountCode: string): string => {
+    // Ana hesap ismini bul
+    if (mainAccountCode === '120.01') return 'ALICILAR';
+    if (mainAccountCode === '100.01') return 'KASA';
+    if (mainAccountCode === '100.02') return 'BANKA';
+    if (mainAccountCode === '153.01') return 'TİCARİ MALLAR';
+    if (mainAccountCode === '191.01') return 'İNDİRİLECEK KDV';
+    if (mainAccountCode === '191.02') return 'İNDİRİLECEK KDV TEVKİFATI';
+    if (mainAccountCode === '191.03') return 'İNDİRİLECEK İADE KDV';
+    if (mainAccountCode === '320.01') return 'SATICILAR';
+    if (mainAccountCode === '360.02') return 'ÖDENECEK TİCARİ VERGİLER';
+    if (mainAccountCode === '391.01') return 'HESAPLANAN KDV';
+    if (mainAccountCode === '391.02') return 'HESAPLANAN KDV TEVKİFATI';
+    if (mainAccountCode === '391.03') return 'HESAPLANAN İADE KDV';
+    if (mainAccountCode === '600.01') return 'YURTİÇİ SATIŞLAR';
+    if (mainAccountCode === '610.01') return 'SATIŞTAN İADELER';
+
+    // Üst seviye hesaplar için
+    if (mainAccountCode === '100') return 'KASA VE BANKA';
+    if (mainAccountCode === '120') return 'TİCARİ ALACAKLAR';
+    if (mainAccountCode === '153') return 'TİCARİ MALLAR';
+    if (mainAccountCode === '191') return 'İNDİRİLECEK VERGİLER';
+    if (mainAccountCode === '320') return 'TİCARİ BORÇLAR';
+    if (mainAccountCode === '360') return 'ÖDENECEK VERGİLER';
+    if (mainAccountCode === '391') return 'HESAPLANAN VERGİLER';
+    if (mainAccountCode === '600') return 'SATIŞLAR';
+    if (mainAccountCode === '610') return 'SATIŞTAN İADELER';
+
+    return 'ANA HESAP';
+  };
+
   const buildTree = (flatData: ApiDataItem[]): TreeNode[] => {
     const nodeMap = new Map<string, TreeNode>();
-    const roots: TreeNode[] = [];
+    const allNodes: TreeNode[] = [];
 
-    // Sort by account code to ensure proper hierarchy
-    const sortedData = [...flatData].sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+    // Filter out invalid data (empty account codes)
+    const validData = flatData.filter(item => item.accountCode && item.accountCode.trim() !== '');
+
+    // Sort by account code
+    const sortedData = [...validData].sort((a, b) => a.accountCode.localeCompare(b.accountCode));
 
     // Create all nodes first
     sortedData.forEach(item => {
@@ -83,20 +123,54 @@ const HierarchicalView: React.FC = () => {
         debit: item.debit,
         credit: item.credit,
         children: [],
-        level: getAccountLevel(item.accountCode)
+        level: getAccountDepth(item.accountCode)
       };
       nodeMap.set(item.accountCode, node);
+      allNodes.push(node);
     });
 
-    // Build hierarchy
-    sortedData.forEach(item => {
-      const node = nodeMap.get(item.accountCode)!;
-      const parentCode = getParentAccountCode(item.accountCode);
+    // Create missing parent nodes if needed (including grandparents)
+    const missingParents = new Set<string>();
+    allNodes.forEach(node => {
+      let currentCode = node.accountCode;
+      let parentCode = getParentCode(currentCode);
+
+      // Keep going up the hierarchy to find all missing parents
+      while (parentCode) {
+        if (!nodeMap.has(parentCode)) {
+          missingParents.add(parentCode);
+        }
+        currentCode = parentCode;
+        parentCode = getParentCode(currentCode);
+      }
+    });
+
+    // Add missing parent nodes
+    missingParents.forEach(parentCode => {
+      const parentNode: TreeNode = {
+        accountCode: parentCode,
+        accountName: getMainAccountName(parentCode),
+        debit: 0,
+        credit: 0,
+        children: [],
+        level: getAccountDepth(parentCode)
+      };
+      nodeMap.set(parentCode, parentNode);
+      allNodes.push(parentNode);
+    });
+
+    // Build multiple levels of hierarchy
+    const roots: TreeNode[] = [];
+
+    allNodes.forEach(node => {
+      const parentCode = getParentCode(node.accountCode);
 
       if (parentCode && nodeMap.has(parentCode)) {
+        // Add to parent
         const parent = nodeMap.get(parentCode)!;
         parent.children.push(node);
       } else {
+        // This is a root node
         roots.push(node);
       }
     });
@@ -104,39 +178,29 @@ const HierarchicalView: React.FC = () => {
     return roots;
   };
 
-  const getAccountLevel = (accountCode: string): number => {
-    // Count non-zero digits to determine level
-    const segments = accountCode.match(/.{1,2}/g) || [];
-    let level = 0;
-    for (const segment of segments) {
-      if (parseInt(segment) !== 0) {
-        level++;
-      } else {
-        break;
-      }
-    }
-    return level;
+  const getAccountDepth = (accountCode: string): number => {
+    // 100 = level 1
+    // 100.01 = level 2
+    // 100.01.00001001 = level 3
+    const parts = accountCode.split('.');
+    return parts.length;
   };
 
-  const getParentAccountCode = (accountCode: string): string | null => {
-    const segments = accountCode.match(/.{1,2}/g) || [];
+  const getParentCode = (accountCode: string): string | null => {
+    const parts = accountCode.split('.');
 
-    // Find the last non-zero segment
-    let lastNonZeroIndex = -1;
-    for (let i = segments.length - 1; i >= 0; i--) {
-      if (parseInt(segments[i]) !== 0) {
-        lastNonZeroIndex = i;
-        break;
-      }
+    if (parts.length === 1) {
+      // 100 -> no parent
+      return null;
+    } else if (parts.length === 2) {
+      // 100.01 -> 100
+      return parts[0];
+    } else if (parts.length === 3) {
+      // 100.01.00001001 -> 100.01
+      return parts[0] + '.' + parts[1];
     }
 
-    if (lastNonZeroIndex <= 0) return null;
-
-    // Create parent code by setting the last non-zero segment to 00
-    const parentSegments = [...segments];
-    parentSegments[lastNonZeroIndex] = '00';
-
-    return parentSegments.join('');
+    return null;
   };
 
   const handleToggle = (event: React.SyntheticEvent | null, itemIds: string[]) => {
@@ -150,87 +214,139 @@ const HierarchicalView: React.FC = () => {
     }).format(amount);
   };
 
+  const calculateTotalDebit = (node: TreeNode): number => {
+    let total = node.debit;
+    node.children.forEach(child => {
+      total += calculateTotalDebit(child);
+    });
+    return total;
+  };
+
   const renderTreeNode = (node: TreeNode): React.ReactNode => {
     const hasChildren = node.children.length > 0;
-    const netBalance = node.debit - node.credit;
 
-    return (
-      <TreeItem
-        key={node.accountCode}
-        itemId={node.accountCode}
-        label={
-          <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, pr: 0 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', flex: 1 }}>
-              {hasChildren ? (
-                <FolderOpen sx={{ mr: 1, color: 'primary.main' }} />
-              ) : (
-                <AccountBox sx={{ mr: 1, color: 'text.secondary' }} />
-              )}
-              <Box sx={{ flex: 1 }}>
+    if (hasChildren) {
+      // Ana hesap - sadece hesap kodu ve toplam borç göster
+      const totalDebit = calculateTotalDebit(node);
+
+      return (
+        <TreeItem
+          key={node.accountCode}
+          itemId={node.accountCode}
+          label={
+            <Box sx={{ display: 'flex', alignItems: 'center', py: 0.5, justifyContent: 'space-between' }}>
+              <Typography
+                variant="body1"
+                sx={{
+                  fontWeight: 'bold',
+                  fontFamily: 'monospace',
+                  color: 'primary.main'
+                }}
+              >
+                {node.accountCode}
+              </Typography>
+              <Typography
+                variant="body1"
+                sx={{
+                  fontWeight: 'bold',
+                  color: 'error.main',
+                  minWidth: 150,
+                  textAlign: 'right'
+                }}
+              >
+                {formatCurrency(totalDebit)}
+              </Typography>
+            </Box>
+          }
+        >
+          {node.children.map(child => renderTreeNode(child))}
+        </TreeItem>
+      );
+    } else {
+      // Alt hesap - detaylı bilgileri göster
+      const netBalance = node.debit - node.credit;
+
+      return (
+        <TreeItem
+          key={node.accountCode}
+          itemId={node.accountCode}
+          label={
+            <Box sx={{ display: 'flex', flexDirection: 'column', py: 1, pl: 2, backgroundColor: 'rgba(0,0,0,0.02)' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                <AccountBox sx={{ mr: 1, color: 'text.secondary', fontSize: 18 }} />
                 <Typography
                   variant="body2"
                   sx={{
-                    fontWeight: hasChildren ? 'bold' : 'medium',
+                    fontWeight: 'medium',
                     fontFamily: 'monospace',
-                    color: hasChildren ? 'primary.main' : 'text.primary'
+                    color: 'text.primary'
                   }}
                 >
                   {node.accountCode}
                 </Typography>
+              </Box>
+
+              <Box sx={{ pl: 3, mb: 1 }}>
                 <Typography
-                  variant="caption"
-                  sx={{
-                    color: 'text.secondary',
-                    display: 'block',
-                    fontSize: '0.75rem'
-                  }}
+                  variant="body2"
+                  sx={{ fontWeight: 'medium', color: 'text.primary' }}
                 >
-                  {node.accountName || 'Hesap adı bulunamadı'}
+                  {node.accountName || 'Şirket adı bulunamadı'}
                 </Typography>
               </Box>
+
+              <Box sx={{ pl: 3, display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                <Box>
+                  <Typography variant="caption" color="textSecondary" sx={{ display: 'block' }}>
+                    Borç:
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: node.debit > 0 ? 'error.main' : 'text.secondary',
+                      fontWeight: node.debit > 0 ? 'medium' : 'normal'
+                    }}
+                  >
+                    {node.debit > 0 ? formatCurrency(node.debit) : '-'}
+                  </Typography>
+                </Box>
+
+                <Box>
+                  <Typography variant="caption" color="textSecondary" sx={{ display: 'block' }}>
+                    Alacak:
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: node.credit > 0 ? 'success.main' : 'text.secondary',
+                      fontWeight: node.credit > 0 ? 'medium' : 'normal'
+                    }}
+                  >
+                    {node.credit > 0 ? formatCurrency(node.credit) : '-'}
+                  </Typography>
+                </Box>
+
+                <Box>
+                  <Typography variant="caption" color="textSecondary" sx={{ display: 'block' }}>
+                    Net Bakiye:
+                  </Typography>
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontWeight: 'bold',
+                      color: netBalance > 0 ? 'error.main' :
+                             netBalance < 0 ? 'success.main' : 'text.primary'
+                    }}
+                  >
+                    {formatCurrency(netBalance)}
+                  </Typography>
+                </Box>
+              </Box>
             </Box>
-            <Box sx={{ display: 'flex', gap: 2, minWidth: 400 }}>
-              <Typography
-                variant="body2"
-                sx={{
-                  minWidth: 100,
-                  textAlign: 'right',
-                  color: node.debit > 0 ? 'error.main' : 'text.secondary',
-                  fontWeight: node.debit > 0 ? 'medium' : 'normal'
-                }}
-              >
-                {node.debit > 0 ? formatCurrency(node.debit) : '-'}
-              </Typography>
-              <Typography
-                variant="body2"
-                sx={{
-                  minWidth: 100,
-                  textAlign: 'right',
-                  color: node.credit > 0 ? 'success.main' : 'text.secondary',
-                  fontWeight: node.credit > 0 ? 'medium' : 'normal'
-                }}
-              >
-                {node.credit > 0 ? formatCurrency(node.credit) : '-'}
-              </Typography>
-              <Typography
-                variant="body2"
-                sx={{
-                  minWidth: 120,
-                  textAlign: 'right',
-                  fontWeight: 'bold',
-                  color: netBalance > 0 ? 'error.main' :
-                         netBalance < 0 ? 'success.main' : 'text.primary'
-                }}
-              >
-                {formatCurrency(netBalance)}
-              </Typography>
-            </Box>
-          </Box>
-        }
-      >
-        {node.children.map(child => renderTreeNode(child))}
-      </TreeItem>
-    );
+          }
+        />
+      );
+    }
   };
 
   useEffect(() => {
@@ -280,9 +396,12 @@ const HierarchicalView: React.FC = () => {
   const getTotalStats = () => {
     let totalDebit = 0;
     let totalCredit = 0;
-    let totalAccounts = flatData.length;
 
-    flatData.forEach(item => {
+    // Filter out invalid data (empty account codes) for accurate stats
+    const validData = flatData.filter(item => item.accountCode && item.accountCode.trim() !== '');
+    const totalAccounts = validData.length;
+
+    validData.forEach(item => {
       totalDebit += item.debit;
       totalCredit += item.credit;
     });
@@ -377,21 +496,13 @@ const HierarchicalView: React.FC = () => {
       {/* Tree View Header */}
       <Paper elevation={2} sx={{ mb: 2 }}>
         <Box sx={{ p: 2, backgroundColor: 'primary.main', color: 'white' }}>
-          <Box sx={{ display: 'flex', alignItems: 'center' }}>
-            <Typography variant="h6" sx={{ flex: 1, fontWeight: 'bold' }}>
-              Hesap Kodu ve Adı
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+              Hesap Kodu
             </Typography>
-            <Box sx={{ display: 'flex', gap: 2, minWidth: 400 }}>
-              <Typography variant="body2" sx={{ minWidth: 100, textAlign: 'right', fontWeight: 'bold' }}>
-                Borç (₺)
-              </Typography>
-              <Typography variant="body2" sx={{ minWidth: 100, textAlign: 'right', fontWeight: 'bold' }}>
-                Alacak (₺)
-              </Typography>
-              <Typography variant="body2" sx={{ minWidth: 120, textAlign: 'right', fontWeight: 'bold' }}>
-                Net Bakiye (₺)
-              </Typography>
-            </Box>
+            <Typography variant="h6" sx={{ fontWeight: 'bold', minWidth: 150, textAlign: 'right' }}>
+              Toplam Borç (₺)
+            </Typography>
           </Box>
         </Box>
       </Paper>
